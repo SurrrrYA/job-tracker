@@ -13,6 +13,14 @@ import { createApplication, deleteApplication, updateStatus } from "./actions";
 
 export const dynamic = "force-dynamic";
 
+function buildHref(status: Status | null, q: string) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (q) params.set("q", q);
+  const query = params.toString();
+  return query ? `/?${query}` : "/";
+}
+
 function dueLabel(date: Date, todayStart: Date) {
   const diff = Math.round((date.getTime() - todayStart.getTime()) / 86400000);
   if (diff < 0) return { text: `Terlewat ${-diff} hari`, tone: "text-rose-700" };
@@ -24,22 +32,34 @@ function dueLabel(date: Date, todayStart: Date) {
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status: statusParam } = await searchParams;
+  const { status: statusParam, q: qParam } = await searchParams;
   const activeStatus =
     statusParam && statusParam in Status ? (statusParam as Status) : null;
+  const q = (qParam ?? "").trim();
 
   const all = await prisma.application.findMany({
     orderBy: { updatedAt: "desc" },
   });
 
+  const needle = q.toLowerCase();
+  const matched = needle
+    ? all.filter((a) =>
+        [a.company, a.position, a.source, a.notes]
+          .filter(Boolean)
+          .some((field) => field!.toLowerCase().includes(needle))
+      )
+    : all;
+
   const counts = STATUS_ORDER.reduce(
-    (acc, s) => ({ ...acc, [s]: all.filter((a) => a.status === s).length }),
+    (acc, s) => ({ ...acc, [s]: matched.filter((a) => a.status === s).length }),
     {} as Record<Status, number>
   );
 
-  const items = activeStatus ? all.filter((a) => a.status === activeStatus) : all;
+  const items = activeStatus
+    ? matched.filter((a) => a.status === activeStatus)
+    : matched;
 
   const today = todayJakarta();
   const todayStart = new Date(today);
@@ -87,13 +107,36 @@ export default async function Home({
         </section>
       )}
 
+      <form action="/" method="get" role="search" className="mb-4 flex flex-wrap items-center gap-2">
+        {activeStatus && <input type="hidden" name="status" value={activeStatus} />}
+        <input
+          type="search"
+          name="q"
+          defaultValue={q}
+          aria-label="Cari lamaran"
+          placeholder="Cari perusahaan, posisi, sumber, atau catatan"
+          className={`${INPUT_CLASS} flex-1`}
+        />
+        <button
+          type="submit"
+          className="rounded-md bg-teal-700 px-4 py-2 text-sm font-medium text-white hover:bg-teal-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-teal-700"
+        >
+          Cari
+        </button>
+        {q && (
+          <Link href={buildHref(activeStatus, "")} className="text-sm text-slate-600 hover:underline">
+            Hapus pencarian
+          </Link>
+        )}
+      </form>
+
       <nav aria-label="Filter status" className="mb-8 grid grid-cols-3 gap-2 sm:grid-cols-6">
         {STATUS_ORDER.map((s) => {
           const isActive = activeStatus === s;
           return (
             <Link
               key={s}
-              href={isActive ? "/" : `/?status=${s}`}
+              href={buildHref(isActive ? null : s, q)}
               className={`rounded-md border px-3 py-2 text-left transition-colors ${
                 isActive
                   ? "border-teal-700 bg-teal-700 text-white"
@@ -163,9 +206,13 @@ export default async function Home({
 
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">
-          {activeStatus
-            ? `Belum ada lamaran dengan status ${STATUS_LABEL[activeStatus]}.`
-            : "Belum ada lamaran. Buka \"Tambah lamaran\" untuk mencatat yang pertama."}
+          {q
+            ? `Tidak ada lamaran yang cocok dengan "${q}"${
+                activeStatus ? ` berstatus ${STATUS_LABEL[activeStatus]}` : ""
+              }.`
+            : activeStatus
+              ? `Belum ada lamaran dengan status ${STATUS_LABEL[activeStatus]}.`
+              : "Belum ada lamaran. Buka \"Tambah lamaran\" untuk mencatat yang pertama."}
         </p>
       ) : (
         <ul className="space-y-3">
