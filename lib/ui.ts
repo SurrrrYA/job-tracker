@@ -21,10 +21,19 @@ export const STATUS_LABEL: Record<Status, string> = {
 export const STATUS_BADGE: Record<Status, string> = {
   SAVED: "bg-slate-100 text-slate-700",
   APPLIED: "bg-sky-100 text-sky-800",
-  TEST: "bg-amber-100 text-amber-800",
+  TEST: "bg-amber-100 text-amber-900",
   INTERVIEW: "bg-violet-100 text-violet-800",
   OFFER: "bg-emerald-100 text-emerald-800",
   REJECTED: "bg-rose-100 text-rose-800",
+};
+
+export const STATUS_DOT: Record<Status, string> = {
+  SAVED: "bg-slate-400",
+  APPLIED: "bg-sky-500",
+  TEST: "bg-amber-500",
+  INTERVIEW: "bg-violet-500",
+  OFFER: "bg-emerald-500",
+  REJECTED: "bg-rose-500",
 };
 
 export const INPUT_CLASS =
