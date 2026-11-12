@@ -10,13 +10,28 @@ import {
   todayJakarta,
 } from "@/lib/ui";
 import { createApplication, deleteApplication, updateStatus } from "./actions";
+import DeleteButton from "./delete-button";
 
 export const dynamic = "force-dynamic";
 
-function buildHref(status: Status | null, q: string) {
+type Sort = "updated" | "applied" | "company" | "next";
+
+const SORT_ORDER: Sort[] = ["updated", "applied", "company", "next"];
+
+const SORT_LABEL: Record<Sort, string> = {
+  updated: "Terakhir diubah",
+  applied: "Tanggal melamar",
+  company: "Perusahaan A–Z",
+  next: "Jadwal terdekat",
+};
+
+const STALE_DAYS = 14;
+
+function buildHref(status: Status | null, q: string, sort: Sort) {
   const params = new URLSearchParams();
   if (status) params.set("status", status);
   if (q) params.set("q", q);
+  if (sort !== "updated") params.set("sort", sort);
   const query = params.toString();
   return query ? `/?${query}` : "/";
 }
@@ -32,11 +47,11 @@ function dueLabel(date: Date, todayStart: Date) {
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; sort?: string }>;
 }) {
-  const { status: statusParam, q: qParam } = await searchParams;
-  const activeStatus =
-    statusParam && statusParam in Status ? (statusParam as Status) : null;
+  const { status: statusParam, q: qParam, sort: sortParam } = await searchParams;
+  const activeStatus = STATUS_ORDER.find((s) => s === statusParam) ?? null;
+  const sort = SORT_ORDER.find((s) => s === sortParam) ?? "updated";
   const q = (qParam ?? "").trim();
 
   const all = await prisma.application.findMany({
@@ -57,12 +72,31 @@ export default async function Home({
     {} as Record<Status, number>
   );
 
-  const items = activeStatus
+  const filtered = activeStatus
     ? matched.filter((a) => a.status === activeStatus)
     : matched;
 
+  const items = [...filtered].sort((a, b) => {
+    switch (sort) {
+      case "applied":
+        return b.appliedAt.getTime() - a.appliedAt.getTime();
+      case "company":
+        return a.company.localeCompare(b.company, "id");
+      case "next": {
+        if (!a.nextDate && !b.nextDate) return 0;
+        if (!a.nextDate) return 1;
+        if (!b.nextDate) return -1;
+        return a.nextDate.getTime() - b.nextDate.getTime();
+      }
+      default:
+        return b.updatedAt.getTime() - a.updatedAt.getTime();
+    }
+  });
+
   const today = todayJakarta();
   const todayStart = new Date(today);
+  const nowMs = new Date().getTime();
+
   const upcoming = all
     .filter((a) => a.nextDate && a.status !== Status.REJECTED)
     .sort((a, b) => a.nextDate!.getTime() - b.nextDate!.getTime())
@@ -70,11 +104,20 @@ export default async function Home({
 
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 text-slate-900">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Lamaran kerja</h1>
-        <p className="mt-1 text-sm text-slate-600">
-          {all.length} lamaran tercatat. Ubah status setiap kali ada kabar baru.
-        </p>
+      <header className="mb-8 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Lamaran kerja</h1>
+          <p className="mt-1 text-sm text-slate-600">
+            {all.length} lamaran tercatat. Ubah status setiap kali ada kabar baru.
+          </p>
+        </div>
+        <a
+          href="/export"
+          download
+          className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm hover:bg-slate-50"
+        >
+          Ekspor CSV
+        </a>
       </header>
 
       {upcoming.length > 0 && (
@@ -109,6 +152,7 @@ export default async function Home({
 
       <form action="/" method="get" role="search" className="mb-4 flex flex-wrap items-center gap-2">
         {activeStatus && <input type="hidden" name="status" value={activeStatus} />}
+        {sort !== "updated" && <input type="hidden" name="sort" value={sort} />}
         <input
           type="search"
           name="q"
@@ -124,7 +168,7 @@ export default async function Home({
           Cari
         </button>
         {q && (
-          <Link href={buildHref(activeStatus, "")} className="text-sm text-slate-600 hover:underline">
+          <Link href={buildHref(activeStatus, "", sort)} className="text-sm text-slate-600 hover:underline">
             Hapus pencarian
           </Link>
         )}
@@ -136,7 +180,7 @@ export default async function Home({
           return (
             <Link
               key={s}
-              href={buildHref(isActive ? null : s, q)}
+              href={buildHref(isActive ? null : s, q, sort)}
               className={`rounded-md border px-3 py-2 text-left transition-colors ${
                 isActive
                   ? "border-teal-700 bg-teal-700 text-white"
@@ -204,6 +248,27 @@ export default async function Home({
         </form>
       </details>
 
+      {all.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <span className="text-slate-500">Urutkan:</span>
+          {SORT_ORDER.map((s) => (
+            <Link
+              key={s}
+              href={buildHref(activeStatus, q, s)}
+              aria-current={sort === s ? "true" : undefined}
+              className={
+                sort === s
+                  ? "font-medium text-teal-700 underline underline-offset-4"
+                  : "text-slate-600 hover:underline"
+              }
+            >
+              {SORT_LABEL[s]}
+            </Link>
+          ))}
+          <span className="ml-auto text-slate-500">{items.length} ditampilkan</span>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-600">
           {q
@@ -216,76 +281,87 @@ export default async function Home({
         </p>
       ) : (
         <ul className="space-y-3">
-          {items.map((a) => (
-            <li key={a.id} className="rounded-lg border border-slate-200 bg-white p-4">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-medium">{a.company}</h2>
-                  <p className="text-sm text-slate-600">{a.position}</p>
-                </div>
-                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_BADGE[a.status]}`}>
-                  {STATUS_LABEL[a.status]}
-                </span>
-              </div>
+          {items.map((a) => {
+            const staleDays =
+              a.status === Status.APPLIED
+                ? Math.floor((nowMs - a.updatedAt.getTime()) / 86400000)
+                : 0;
 
-              <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm text-slate-700 sm:grid-cols-2">
-                <div>
-                  <dt className="inline text-slate-500">Melamar: </dt>
-                  <dd className="inline">{formatDate(a.appliedAt)}</dd>
-                </div>
-                {a.source && (
+            return (
+              <li key={a.id} className="rounded-lg border border-slate-200 bg-white p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <dt className="inline text-slate-500">Sumber: </dt>
-                    <dd className="inline">{a.source}</dd>
+                    <h2 className="font-medium">{a.company}</h2>
+                    <p className="text-sm text-slate-600">{a.position}</p>
                   </div>
-                )}
-                {(a.nextStep || a.nextDate) && (
-                  <div className="sm:col-span-2">
-                    <dt className="inline text-slate-500">Berikutnya: </dt>
-                    <dd className="inline">
-                      {a.nextStep}
-                      {a.nextStep && a.nextDate ? ", " : ""}
-                      {formatDate(a.nextDate)}
-                    </dd>
+                  <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${STATUS_BADGE[a.status]}`}>
+                    {STATUS_LABEL[a.status]}
+                  </span>
+                </div>
+
+                <dl className="mt-3 grid gap-x-6 gap-y-1 text-sm text-slate-700 sm:grid-cols-2">
+                  <div>
+                    <dt className="inline text-slate-500">Melamar: </dt>
+                    <dd className="inline">{formatDate(a.appliedAt)}</dd>
                   </div>
+                  {a.source && (
+                    <div>
+                      <dt className="inline text-slate-500">Sumber: </dt>
+                      <dd className="inline">{a.source}</dd>
+                    </div>
+                  )}
+                  {(a.nextStep || a.nextDate) && (
+                    <div className="sm:col-span-2">
+                      <dt className="inline text-slate-500">Berikutnya: </dt>
+                      <dd className="inline">
+                        {a.nextStep}
+                        {a.nextStep && a.nextDate ? ", " : ""}
+                        {formatDate(a.nextDate)}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+
+                {staleDays >= STALE_DAYS && (
+                  <p className="mt-2 text-sm font-medium text-amber-700">
+                    Belum ada kabar selama {staleDays} hari. Pertimbangkan follow-up.
+                  </p>
                 )}
-              </dl>
 
-              {a.notes && <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{a.notes}</p>}
+                {a.notes && <p className="mt-3 whitespace-pre-line text-sm text-slate-700">{a.notes}</p>}
 
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
-                <form action={updateStatus} className="flex items-center gap-2">
-                  <input type="hidden" name="id" value={a.id} />
-                  <select
-                    name="status"
-                    defaultValue={a.status}
-                    aria-label={`Status lamaran ${a.company}`}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
-                  >
-                    {STATUS_ORDER.map((s) => (
-                      <option key={s} value={s}>
-                        {STATUS_LABEL[s]}
-                      </option>
-                    ))}
-                  </select>
-                  <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
-                    Ubah status
-                  </button>
-                </form>
-                <div className="flex items-center gap-4">
-                  <Link href={`/edit/${a.id}`} className="text-sm text-teal-700 hover:underline">
-                    Edit
-                  </Link>
-                  <form action={deleteApplication}>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                  <form action={updateStatus} className="flex items-center gap-2">
                     <input type="hidden" name="id" value={a.id} />
-                    <button type="submit" className="text-sm text-rose-700 hover:underline">
-                      Hapus
+                    <select
+                      name="status"
+                      defaultValue={a.status}
+                      aria-label={`Status lamaran ${a.company}`}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm"
+                    >
+                      {STATUS_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {STATUS_LABEL[s]}
+                        </option>
+                      ))}
+                    </select>
+                    <button type="submit" className="rounded-md border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50">
+                      Ubah status
                     </button>
                   </form>
+                  <div className="flex items-center gap-4">
+                    <Link href={`/edit/${a.id}`} className="text-sm text-teal-700 hover:underline">
+                      Edit
+                    </Link>
+                    <form action={deleteApplication}>
+                      <input type="hidden" name="id" value={a.id} />
+                      <DeleteButton label={a.company} />
+                    </form>
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
       )}
     </main>

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { Status } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/auth";
 
 function text(formData: FormData, key: string): string | null {
   const value = formData.get(key);
@@ -25,6 +26,8 @@ function status(formData: FormData): Status {
 }
 
 export async function createApplication(formData: FormData) {
+  await requireSession();
+
   const company = text(formData, "company");
   const position = text(formData, "position");
   if (!company || !position) return;
@@ -46,6 +49,8 @@ export async function createApplication(formData: FormData) {
 }
 
 export async function updateApplication(formData: FormData) {
+  await requireSession();
+
   const id = Number(formData.get("id"));
   if (!Number.isInteger(id)) return;
 
@@ -72,6 +77,8 @@ export async function updateApplication(formData: FormData) {
 }
 
 export async function updateStatus(formData: FormData) {
+  await requireSession();
+
   const id = Number(formData.get("id"));
   if (!Number.isInteger(id)) return;
 
@@ -84,6 +91,8 @@ export async function updateStatus(formData: FormData) {
 }
 
 export async function deleteApplication(formData: FormData) {
+  await requireSession();
+
   const id = Number(formData.get("id"));
   if (!Number.isInteger(id)) return;
 
